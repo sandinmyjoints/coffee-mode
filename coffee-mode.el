@@ -132,6 +132,7 @@
 (require 'comint)
 (require 'easymenu)
 (require 'font-lock)
+(require 'rx)
 
 (eval-when-compile
   (require 'cl))
@@ -295,10 +296,14 @@ file.
 If there are compilation errors, point is moved to the first
 (see `coffee-compile-jump-to-error')."
   (interactive)
-  (let ((compiler-output (shell-command-to-string (coffee-command-compile (buffer-file-name)))))
+  (let* ((basename (file-name-sans-extension (buffer-file-name)))
+         (output-file (if (string= (substring basename -3) ".js")
+                          basename
+                        (concat basename ".js")))
+         (compiler-output (shell-command-to-string (coffee-command-compile (buffer-file-name) output-file))))
     (if (string= compiler-output "")
         (let ((file-name (coffee-compiled-file-name)))
-          (message "Compiled and saved %s" file-name)
+          (message "Compiled and saved %s" output-file)
           (coffee-revert-buffer-compiled-file file-name))
       (let* ((msg (car (split-string compiler-output "[\n\r]+")))
              (line (and (string-match "on line \\([0-9]+\\)" msg)
@@ -404,46 +409,47 @@ called `coffee-compiled-buffer-name'."
 (defvar coffee-this-regexp "\\(?:@\\w+\\|\\<this\\)\\>")
 
 ;; Prototype::access
-(defvar coffee-prototype-regexp "\\(\\(\\w\\|\\.\\| \\|$\\)+?\\)::\\(\\(\\w\\|\\.\\| \\|$\\)+?\\):")
+(defvar coffee-prototype-regexp "[[:word:].$]+?::")
 
 ;; Assignment
-(defvar coffee-assign-regexp "\\(\\(\\w\\|\\.\\|$\\)+?\s*\\):")
+(defvar coffee-assign-regexp "\\([[:word:].$]+?\\)\\s-*:")
 
 ;; Local Assignment
-(defvar coffee-local-assign-regexp "\\(?:^\\|\\s-\\)\\(\\(\\w\\|\\$\\)+\\)\s+=[^>]")
+(defvar coffee-local-assign-regexp "\\s-*\\([[:word:].$]+\\)\\s-*=\\(?:[^>]\\|$\\)")
 
 ;; Lambda
-(defvar coffee-lambda-regexp "\\((.+)\\)?\\s *\\(->\\|=>\\)")
+(defvar coffee-lambda-regexp "\\(?:(.+)\\)?\\s-*\\(->\\|=>\\)")
 
 ;; Namespaces
-(defvar coffee-namespace-regexp "\\b\\(class\\s +\\(\\S +\\)\\)\\b")
+(defvar coffee-namespace-regexp "\\b\\(?:class\\s-+\\(\\S-+\\)\\)\\b")
 
 ;; Booleans
-(defvar coffee-boolean-regexp "\\b\\(true\\|false\\|yes\\|no\\|on\\|off\\|null\\|undefined\\)\\b")
+(defvar coffee-boolean-regexp "\\b\\(?:true\\|false\\|yes\\|no\\|on\\|off\\|null\\|undefined\\)\\b")
 
 ;; Regular expressions
-(defvar coffee-regexp-regexp "\\s$.*\\s$")
+(eval-and-compile
+  (defvar coffee-regexp-regexp "\\s$\\(\\(?:\\\\/\\|[^/\n\r]\\)*\\)\\s$"))
 
 ;; String Interpolation(This regexp is taken from ruby-mode)
 (defvar coffee-string-interpolation-regexp "#{[^}\n\\\\]*\\(?:\\\\.[^}\n\\\\]*\\)*}")
 
 ;; JavaScript Keywords
 (defvar coffee-js-keywords
-      '("if" "else" "new" "return" "try" "catch"
-        "finally" "throw" "break" "continue" "for" "in" "while"
-        "delete" "instanceof" "typeof" "switch" "super" "extends"
-        "class" "until" "loop"))
+  '("if" "else" "new" "return" "try" "catch"
+    "finally" "throw" "break" "continue" "for" "in" "while"
+    "delete" "instanceof" "typeof" "switch" "super" "extends"
+    "class" "until" "loop"))
 
 ;; Reserved keywords either by JS or CS.
 (defvar coffee-js-reserved
-      '("case" "default" "do" "function" "var" "void" "with"
-        "const" "let" "debugger" "enum" "export" "import" "native"
-        "__extends" "__hasProp"))
+  '("case" "default" "do" "function" "var" "void" "with"
+    "const" "let" "debugger" "enum" "export" "import" "native"
+    "__extends" "__hasProp"))
 
 ;; CoffeeScript keywords.
 (defvar coffee-cs-keywords
-      '("then" "unless" "and" "or" "is" "own"
-        "isnt" "not" "of" "by" "when"))
+  '("then" "unless" "and" "or" "is" "own"
+    "isnt" "not" "of" "by" "when"))
 
 ;; Iced CoffeeScript keywords
 (defvar iced-coffee-cs-keywords
@@ -466,11 +472,11 @@ called `coffee-compiled-buffer-name'."
   ;; "state_entry" would be highlighted.
   `((,coffee-regexp-regexp . font-lock-constant-face)
     (,coffee-this-regexp . font-lock-variable-name-face)
-    (,coffee-prototype-regexp . font-lock-variable-name-face)
+    (,coffee-prototype-regexp . font-lock-type-face)
     (,coffee-assign-regexp . font-lock-type-face)
     (,coffee-local-assign-regexp 1 font-lock-variable-name-face)
     (,coffee-boolean-regexp . font-lock-constant-face)
-    (,coffee-lambda-regexp 2 font-lock-function-name-face)
+    (,coffee-lambda-regexp 1 font-lock-function-name-face)
     (,coffee-keywords-regexp 1 font-lock-keyword-face)
     (,coffee-string-interpolation-regexp 0 font-lock-variable-name-face t)))
 
@@ -486,8 +492,9 @@ For details, see `comment-dwim'."
   (let ((deactivate-mark nil) (comment-start "#") (comment-end ""))
     (comment-dwim arg)))
 
-(defun coffee-command-compile (file-name)
-  "Run `coffee-command' to compile FILE."
+(defun coffee-command-compile (file-name &optional output-file-name)
+  "Run `coffee-command' to compile FILE-NAME to file with default
+.js output file, or optionally to OUTPUT-FILE-NAME."
   (let* ((full-file-name
           (expand-file-name file-name))
          (output-dir
@@ -495,11 +502,14 @@ For details, see `comment-dwim'."
            (coffee-compiled-file-name full-file-name))))
     (if (not (file-exists-p output-dir))
         (make-directory output-dir t))
-    (mapconcat 'identity (append (list (shell-quote-argument coffee-command))
-                                 coffee-args-compile
-                                 (list "-o" (shell-quote-argument output-dir))
-                                 (list (shell-quote-argument full-file-name)))
-               " ")))
+    (let ((compile-args (if output-file-name
+                            (append coffee-args-compile (list "-j" output-file-name))
+                          coffee-args-compile)))
+      (mapconcat 'identity (append (list (shell-quote-argument coffee-command))
+                                   compile-args
+                                   (list "-o" (shell-quote-argument output-dir))
+                                   (list (shell-quote-argument full-file-name)))
+                 " "))))
 
 (defun coffee-run-cmd (args)
   "Run `coffee-command' with the given arguments, and display the
@@ -514,41 +524,18 @@ output in a compilation buffer."
 ;; imenu support
 ;;
 
-;; This is a pretty naive but workable way of doing it. First we look
-;; for any lines that starting with `coffee-assign-regexp' that include
-;; `coffee-lambda-regexp' then add those tokens to the list.
-;;
-;; Should cover cases like these:
-;;
-;; minus: (x, y) -> x - y
-;; String::length: -> 10
-;; block: ->
-;;   print('potion')
-;;
-;; Next we look for any line that starts with `class' or
-;; `coffee-assign-regexp' followed by `{` and drop into a
-;; namespace. This means we search one indentation level deeper for
-;; more assignments and add them to the alist prefixed with the
-;; namespace name.
-;;
-;; Should cover cases like these:
-;;
-;; class Person
-;;   print: ->
-;;     print 'My name is ' + this.name + '.'
-;;
-;; class Policeman extends Person
-;;   constructor: (rank) ->
-;;     @rank: rank
-;;   print: ->
-;;     print 'My name is ' + this.name + " and I'm a " + this.rank + '.'
-;;
-;; TODO:
-;; app = {
-;;   window:  {width: 200, height: 200}
-;;   para:    -> 'Welcome.'
-;;   button:  -> 'OK'
-;; }
+(defconst coffee-imenu-index-regexp
+  (concat "^\\(\\s-*\\)" ; $1
+          "\\(?:"
+          coffee-assign-regexp ; $2
+          "\\s-+"
+          coffee-lambda-regexp
+          "\\|"
+          coffee-namespace-regexp ; $4
+          "\\|"
+          "\\([[:word:]:.$]+\\)\\s-*=\\(?:[^>]\\|$\\)" ; $5 match prototype access too
+          "\\(?:" "\\s-*" "\\(" coffee-lambda-regexp "\\)" "\\)?" ; $6
+          "\\)"))
 
 (defun coffee-imenu-create-index ()
   "Create an imenu index of all methods in the buffer."
@@ -557,59 +544,36 @@ output in a compilation buffer."
   ;; This function is called within a `save-excursion' so we're safe.
   (goto-char (point-min))
 
-  (let ((index-alist '()) assign pos indent ns-name ns-indent)
+  (let ((index-alist '())
+        (ns-indent 0)
+        ns-name)
     ;; Go through every assignment that includes -> or => on the same
     ;; line or starts with `class'.
-    (while (re-search-forward
-            (concat "^\\(\\s *\\)"
-                    "\\("
-                      coffee-assign-regexp
-                      ".+?"
-                      coffee-lambda-regexp
-                    "\\|"
-                      coffee-namespace-regexp
-                    "\\)")
-            (point-max)
-            t)
+    (while (re-search-forward coffee-imenu-index-regexp nil t)
+      (let ((current-indent (- (match-end 1) (match-beginning 1)))
+            (property-name (match-string-no-properties 2))
+            (class-name (match-string-no-properties 4))
+            (variable-name (match-string-no-properties 5))
+            (func-assign (match-string-no-properties 6)))
 
-      ;; If this is the start of a new namespace, save the namespace's
-      ;; indentation level and name.
-      (when (match-string 8)
-        ;; Set the name.
-        (setq ns-name (match-string 8))
+        ;; If this is the start of a new namespace, save the namespace's
+        ;; indentation level and name.
+        (if class-name
+            (setq ns-name (concat class-name "::")
+                  ns-indent current-indent)
+          (when (and variable-name (<= current-indent ns-indent))
+            (setq ns-name (concat variable-name ".")
+                  ns-indent current-indent)))
 
-        ;; If this is a class declaration, add :: to the namespace.
-        (setq ns-name (concat ns-name "::"))
-
-        ;; Save the indentation level.
-        (setq ns-indent (length (match-string 1))))
-
-      ;; If this is an assignment, save the token being
-      ;; assigned. `Please.print:` will be `Please.print`, `block:`
-      ;; will be `block`, etc.
-      (when (setq assign (match-string 3))
-          ;; The position of the match in the buffer.
-          (setq pos (match-beginning 3))
-
-          ;; The indent level of this match
-          (setq indent (length (match-string 1)))
-
-          ;; If we're within the context of a namespace, add that to the
-          ;; front of the assign, e.g.
-          ;; constructor: => Policeman::constructor
-          (when (and ns-name (> indent ns-indent))
-            (setq assign (concat ns-name assign)))
-
-          ;; Clear the namespace if we're no longer indented deeper
-          ;; than it.
-          (when (and ns-name (<= indent ns-indent))
-            (setq ns-name nil)
-            (setq ns-indent nil))
-
-          ;; Add this to the alist. Done.
-          (push (cons assign pos) index-alist)))
-
-    ;; Return the alist.
+        (if func-assign
+            (push (cons variable-name (match-beginning 5)) index-alist)
+          (when (and ns-name property-name)
+            (let ((index-pos (match-beginning 2)))
+              (if (<= current-indent ns-indent)
+                  ;; Clear the namespace if we're no longer indented deeper
+                  (setq ns-name nil ns-indent nil)
+                ;; Register as index-name if we are within the context of a namespace
+                (push (cons (concat ns-name property-name) index-pos) index-alist)))))))
     index-alist))
 
 ;;
@@ -854,49 +818,96 @@ END lie."
     (indent-rigidly start end amount)))
 
 ;;
-;; Define Major Mode
+;; Fill
 ;;
 
-(defun coffee-block-comment-delimiter (match)
-  (progn
-    (goto-char match)
-    (beginning-of-line)
-    (add-text-properties (point) (+ (point) 1) `(syntax-table (14 . nil)))))
+(defun coffee-fill-forward-paragraph-function (&optional count)
+  "`fill-forward-paragraph-function' which correctly handles block
+comments such as the following:
 
-;; support coffescript block comments
-;; examples:
-;;   at indent level 0
-;;   ###
-;;        foobar
-;;   ###
-;;   at indent level 0 with text following it
-;;   ### foobar
-;;     moretext
-;;   ###
-;;   at indent level > 0
-;;     ###
-;;       foobar
-;;     ###
-;; examples of non-block comments:
-;;   #### foobar
-(defun coffee-propertize-function (start end)
-  ;; return if we don't have anything to parse
-  (unless (>= start end)
-    (save-excursion
-      (progn
-        (goto-char start)
-        (let ((match (re-search-forward
-                      "^[[:space:]]*###\\([[:space:]]+.*\\)?$" end t)))
-          (if match
-              (progn
-                (coffee-block-comment-delimiter match)
-                (goto-char match)
-                (forward-line)
-                (coffee-propertize-function (point) end))))))))
+  class Klass
+    method: ->
+      ###
+      This is a method doc comment that spans multiple lines.
+      If `fill-paragraph' is applied to this paragraph, the comment
+      should preserve its format, with the delimiters on separate lines.
+      ###
+      ..."
+  (let ((ret (forward-paragraph count)))
+    (when (and (= count -1)
+               (looking-at "[[:space:]]*###[[:space:]]*$"))
+      (forward-line))
+    ret))
+
+;;
+;; Define Major Mode
+;;
 
 ;; For compatibility with Emacs < 24, derive conditionally
 (defalias 'coffee-parent-mode
   (if (fboundp 'prog-mode) 'prog-mode 'fundamental-mode))
+
+;;
+;; Based on triple quote of python.el
+;;
+(eval-and-compile
+  (defconst coffee-block-strings-delimiter
+    (rx (and
+         ;; Match even number of backslashes.
+         (or (not (any ?\\ ?\' ?\"))
+             point
+             ;; Quotes might be preceded by a escaped quote.
+             (and (or (not (any ?\\)) point)
+                  ?\\
+                  (* ?\\ ?\\)
+                  (any ?\' ?\")))
+         (* ?\\ ?\\)
+         ;; Match single or triple quotes of any kind.
+         (group (or "'''" "\"\"\""))))))
+
+(defsubst coffee-syntax-count-quotes (quote-char start-point limit)
+  (let ((i 0))
+    (while (and (< i 3)
+                (< (+ start-point i) limit)
+                (eq (char-after (+ start-point i)) quote-char))
+      (incf i))
+    i))
+
+(defun coffee-syntax-block-strings-stringify ()
+  (let* ((ppss (prog2
+                   (backward-char 3)
+                   (syntax-ppss)
+                 (forward-char 3)))
+         (string-start (and (not (nth 4 ppss)) (nth 8 ppss)))
+         (quote-starting-pos (- (point) 3))
+         (quote-ending-pos (point))
+         (num-closing-quotes
+          (and string-start
+               (coffee-syntax-count-quotes
+                (char-before) string-start quote-starting-pos))))
+    (cond ((and string-start (= num-closing-quotes 0))
+           ;; This set of quotes doesn't match the string starting
+           ;; kind. Do nothing.
+           nil)
+          ((not string-start)
+           ;; This set of quotes delimit the start of a string.
+           (put-text-property quote-starting-pos (1+ quote-starting-pos)
+                              'syntax-table (string-to-syntax "|")))
+          ((= num-closing-quotes 3)
+           ;; This set of quotes delimit the end of a string.
+           (put-text-property (1- quote-ending-pos) quote-ending-pos
+                              'syntax-table (string-to-syntax "|"))))))
+
+(defun coffee-syntax-propertize-function (start end)
+  (goto-char start)
+  (funcall
+   (syntax-propertize-rules
+    (coffee-block-strings-delimiter
+     (0 (ignore (coffee-syntax-block-strings-stringify))))
+    (coffee-regexp-regexp (1 (string-to-syntax "_")))
+    ("^[[:space:]]*\\(###\\)\\(?:[[:space:]]+.*\\)?$"
+     (1 (string-to-syntax "!"))))
+   (point) end))
 
 ;;;###autoload
 (define-derived-mode coffee-mode coffee-parent-mode "Coffee"
@@ -920,20 +931,15 @@ END lie."
   ;; single quote strings
   (modify-syntax-entry ?' "\"" coffee-mode-syntax-table)
 
-  ;; (setq font-lock-syntactic-keywords
-  ;;       ;; Make outer chars of matching triple-quote sequences into generic
-  ;;       ;; string delimiters.
-  ;;       ;; First avoid a sequence preceded by an odd number of backslashes.
-  ;;       `((,(concat "\\(?:^\\|[^\\]\\(?:\\\\.\\)*\\)" ;Prefix.
-  ;;                   "\\(?:\\('\\)\\('\\)\\('\\)\\|\\(?1:\"\\)\\(?2:\"\\)\\(?3:\"\\)\\)")
-  ;;          (1 (coffee-quote-syntax 1) nil lax)
-  ;;          (2 (coffee-quote-syntax 2))
-  ;;          (3 (coffee-quote-syntax 3)))))
-
   ;; indentation
   (set (make-local-variable 'indent-line-function) #'coffee-indent-line)
   (set (make-local-variable 'tab-width) coffee-tab-width)
-  (set (make-local-variable 'syntax-propertize-function) #'coffee-propertize-function)
+
+  (set (make-local-variable 'syntax-propertize-function)
+       'coffee-syntax-propertize-function)
+
+  ;; fill
+  (set (make-local-variable 'fill-forward-paragraph-function) #'coffee-fill-forward-paragraph-function)
 
   ;; imenu
   (set (make-local-variable 'imenu-create-index-function) #'coffee-imenu-create-index)
@@ -949,20 +955,20 @@ END lie."
 ;; Compile-on-Save minor mode
 ;;
 
-(defvar coffee-cos-mode-line " CoS")
-(make-variable-buffer-local 'coffee-cos-mode-line)
+(defcustom coffee-cos-mode-line " CoS"
+  "Lighter of `coffee-cos-mode'"
+  :type 'string
+  :group 'coffee)
 
 (define-minor-mode coffee-cos-mode
   "Toggle compile-on-save for coffee-mode.
 
 Add `'(lambda () (coffee-cos-mode t))' to `coffee-mode-hook' to turn
 it on by default."
-  :group 'coffee-cos :lighter coffee-cos-mode-line
-  (cond
-   (coffee-cos-mode
-    (add-hook 'after-save-hook 'coffee-compile-file nil t))
-   (t
-    (remove-hook 'after-save-hook 'coffee-compile-file t))))
+  :group 'coffee :lighter coffee-cos-mode-line
+  (if coffee-cos-mode
+      (add-hook 'after-save-hook 'coffee-compile-file nil t)
+    (remove-hook 'after-save-hook 'coffee-compile-file t)))
 
 (provide 'coffee-mode)
 
