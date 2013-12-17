@@ -1,4 +1,4 @@
-;;; command.el --- Test for commands of coffee-mode.el
+;;; coffee-command.el --- Test for commands of coffee-mode.el
 
 ;; Copyright (C) 2013 by Syohei YOSHIDA
 
@@ -25,9 +25,20 @@
   (require 'cl))
 
 (require 'ert)
-(require 'test-helper)
-
 (require 'coffee-mode)
+
+;;
+;; version
+;;
+
+(ert-deftest coffee-mode-version ()
+  "Check package version equals to version variable"
+  (let* ((library (locate-library "coffee-mode"))
+         (version (with-current-buffer (find-file-noselect library)
+                    (goto-char (point-min))
+                    (when (re-search-forward "^;; Version: \\([[:digit:].]+\\)$" nil t)
+                      (match-string-no-properties 1)))))
+    (should (string= version coffee-mode-version))))
 
 ;;
 ;; tab command(indentation)
@@ -113,6 +124,85 @@ $('#demo').click ->"
       (call-interactively 'coffee-newline-and-indent)
 
       (should (= (current-column) 2)))))
+
+;;
+;; newline and insert comment(#)
+;;
+
+(ert-deftest insert-hashmark-after-single-line-comment ()
+  "Insert hashmark next line of single line comment"
+  (with-coffee-temp-buffer
+    "
+# foo
+"
+    (forward-cursor-on "foo")
+    (goto-char (line-end-position))
+    (coffee-newline-and-indent)
+
+    (back-to-indentation)
+    (should (looking-at "^#"))))
+
+(ert-deftest not-insert-hashmark-case ()
+  "Don't insert hashmark if previous line is statement comment"
+  (with-coffee-temp-buffer
+    "
+foo = 10 # bar
+"
+    (forward-cursor-on "bar")
+    (goto-char (line-end-position))
+    (coffee-newline-and-indent)
+
+    (back-to-indentation)
+    (should-not (looking-at "^#"))))
+
+(ert-deftest insert-hashmark-after-single-line-comment-not-three-hashmarks ()
+  "Insert hashmark next line of single line comment with not three hashmarks"
+  (with-coffee-temp-buffer
+    "
+## foo
+
+####
+"
+    (forward-cursor-on "foo")
+    (goto-char (line-end-position))
+    (coffee-newline-and-indent)
+
+    (back-to-indentation)
+    (should (looking-at "^#"))
+
+    (forward-cursor-on "####")
+    (goto-char (line-end-position))
+    (coffee-newline-and-indent)
+
+    (back-to-indentation)
+    (should (looking-at "^#"))))
+
+(ert-deftest not-insert-hashmark-after-block-comment ()
+  "Don't insert hash mark next line of block comment line"
+  (with-coffee-temp-buffer
+    "
+###
+"
+    (forward-cursor-on "###")
+    (goto-char (line-end-position))
+    (coffee-newline-and-indent)
+
+    (back-to-indentation)
+    (should-not (looking-at "^#"))))
+
+(ert-deftest indent-inserted-comment-newline ()
+  "indent next line comment"
+  (with-coffee-temp-buffer
+    "
+    # foo
+"
+    (forward-cursor-on "foo")
+    (let ((prev-indent (current-indentation)))
+      (coffee-newline-and-indent)
+      (back-to-indentation)
+      (should (looking-at "#"))
+      (should-not (zerop (current-indentation)))
+      (should (= prev-indent (current-indentation))))))
 
 ;;
 ;; indent left
@@ -510,4 +600,4 @@ value = 10
    (coffee-end-of-block)
    (should (eobp))))
 
-;;; command.el end here
+;;; coffee-command.el end here

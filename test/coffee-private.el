@@ -1,4 +1,4 @@
-;;; private.el --- Test for private functions of coffee-mode.el
+;;; coffee-private.el --- Test for private functions of coffee-mode.el
 
 ;; Copyright (C) 2013 by Syohei YOSHIDA
 
@@ -25,8 +25,6 @@
   (require 'cl))
 
 (require 'ert)
-(require 'test-helper)
-
 (require 'coffee-mode)
 
 (ert-deftest coffee-command-compile-without-output-argument ()
@@ -80,20 +78,7 @@
 ;; Comment
 ;;
 
-(ert-deftest line-is-comment ()
-  ""
-  (with-coffee-temp-buffer
-    "
-# foo = 10
-bar = 10
-"
-    (forward-cursor-on "foo")
-    (should (coffee-line-is-comment))
-
-    (forward-cursor-on "bar")
-    (should-not (coffee-line-is-comment))))
-
-(ert-deftest previous-line-comment ()
+(ert-deftest previous-line-is-single-line-comment ()
   ""
   (with-coffee-temp-buffer
     "
@@ -102,10 +87,24 @@ bar = 10
 baz = 20
 "
     (forward-cursor-on "bar")
-    (should (coffee-previous-line-is-comment))
+    (should (coffee-previous-line-is-single-line-comment))
 
     (forward-cursor-on "baz")
-    (should-not (coffee-previous-line-is-comment))))
+    (should-not (coffee-previous-line-is-single-line-comment))))
+
+(ert-deftest previous-line-is-not-single-line-comment ()
+  ""
+  (with-coffee-temp-buffer
+    "
+###
+#bar = 10
+baz = 20
+"
+    (forward-cursor-on "bar")
+    (should-not (coffee-previous-line-is-single-line-comment))
+
+    (forward-cursor-on "baz")
+    (should (coffee-previous-line-is-single-line-comment))))
 
 ;;
 ;; want new line
@@ -208,4 +207,4 @@ class Foo
     (forward-cursor-on "1")
     (should (coffee-line-wants-indent))))
 
-;;; private.el end here
+;;; coffee-private.el end here
