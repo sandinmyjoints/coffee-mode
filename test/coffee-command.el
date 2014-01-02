@@ -105,6 +105,29 @@ class Animal"
 
       (should (= (current-column) 4)))))
 
+(ert-deftest newline-and-indent-indenters-bol ()
+  "indenters bol keywords"
+  (let ((coffee-tab-width 4))
+    (dolist (keyword '("class" "for" "if" "else" "while" "until"
+                       "try" "catch" "finally" "switch"))
+      (with-coffee-temp-buffer
+        (format "\n    %s" keyword)
+        (goto-char (point-max))
+        (let ((cur-indent (current-indentation)))
+          (call-interactively 'coffee-newline-and-indent)
+          (should (= (current-column) (+ cur-indent coffee-tab-width))))))))
+
+(ert-deftest newline-and-indent-not-indenters-bol ()
+  "indenters bol keywords"
+  (let ((coffee-tab-width 4))
+    (dolist (keyword '("new" "return"))
+      (with-coffee-temp-buffer
+        (format "\n    %s" keyword)
+        (goto-char (point-max))
+        (let ((cur-indent (current-indentation)))
+          (call-interactively 'coffee-newline-and-indent)
+          (should (= (current-column) cur-indent)))))))
+
 (ert-deftest newline-and-indent-deeper ()
   "
 $('#demo').click ->
@@ -195,6 +218,20 @@ foo = 10 # bar
   (with-coffee-temp-buffer
     "
     # foo
+"
+    (forward-cursor-on "foo")
+    (let ((prev-indent (current-indentation)))
+      (coffee-newline-and-indent)
+      (back-to-indentation)
+      (should (looking-at "#"))
+      (should-not (zerop (current-indentation)))
+      (should (= prev-indent (current-indentation))))))
+
+(ert-deftest indent-inserted-comment-newline-deep-indent ()
+  "indent next line comment deep indent case"
+  (with-coffee-temp-buffer
+    "
+              # foo
 "
     (forward-cursor-on "foo")
     (let ((prev-indent (current-indentation)))
@@ -517,6 +554,10 @@ class Foo
    (coffee-end-of-block)
    (should (eobp))))
 
+;;
+;; mark defun
+;;
+
 (ert-deftest mark-defun ()
   "Mark-defun"
 
@@ -528,7 +569,40 @@ human: (name, age) ->
 "
    (forward-cursor-on "human")
    (let ((start (point)))
-     (coffee-mark-defun)
+     (let ((this-command 'coffee-mark-defun))
+       (coffee-mark-defun))
+     (should (= (region-beginning) start))
+     (should (= (region-end) (point-max))))))
+
+(ert-deftest mark-defun-with-no-argument ()
+  "Mark-defun for no argument function"
+
+  (with-coffee-temp-buffer
+   "
+human: () ->
+  @name = 'Alice'
+  @age  = 49
+"
+   (forward-cursor-on "human")
+   (let ((start (point)))
+     (let ((this-command 'coffee-mark-defun))
+       (coffee-mark-defun))
+     (should (= (region-beginning) start))
+     (should (= (region-end) (point-max))))))
+
+(ert-deftest mark-defun-with-no-spaces ()
+  "Mark-defun for no space function"
+
+  (with-coffee-temp-buffer
+   "
+human:(name,age)->
+  @name = name
+  @age  = age
+"
+   (forward-cursor-on "human")
+   (let ((start (point)))
+     (let ((this-command 'coffee-mark-defun))
+       (coffee-mark-defun))
      (should (= (region-beginning) start))
      (should (= (region-end) (point-max))))))
 
@@ -547,9 +621,23 @@ class Foo
 "
    (forward-cursor-on "class")
    (let ((start (point)))
-     (coffee-mark-defun)
+     (let ((this-command 'coffee-mark-defun))
+       (call-interactively 'coffee-mark-defun))
      (should (= (region-beginning) start))
-     (should (= (region-end) (point-max))))))
+     (should (= (region-end) (point-max))))
+
+
+   (forward-cursor-on "hear:")
+   (let ((expected-start (point))
+         (expected-end (save-excursion
+                         (forward-line +1)
+                         (goto-char (line-end-position))
+                         (1+ (point)))))
+     (goto-char (line-end-position))
+     (let ((this-command 'coffee-mark-defun))
+       (call-interactively 'coffee-mark-defun))
+     (should (= (region-beginning) expected-start))
+     (should (= (region-end) expected-end)))))
 
 (ert-deftest move-defun-commands-with-prototype-access ()
   "Move defun commands with prototype access"

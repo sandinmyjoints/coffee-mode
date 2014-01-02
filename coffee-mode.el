@@ -233,8 +233,10 @@ with CoffeeScript."
   (let ((map (make-sparse-keymap)))
     ;; key bindings
     (define-key map (kbd "A-r") 'coffee-compile-buffer)
+    (define-key map (kbd "C-c C-k") 'coffee-compile-buffer)
     (define-key map (kbd "A-R") 'coffee-compile-region)
     (define-key map (kbd "A-M-r") 'coffee-repl)
+    (define-key map (kbd "C-c C-z") 'coffee-repl)
     (define-key map [remap comment-dwim] 'coffee-comment-dwim)
     (define-key map [remap newline-and-indent] 'coffee-newline-and-indent)
     (define-key map "\C-m" 'coffee-newline-and-indent)
@@ -327,8 +329,7 @@ See `coffee-compile-jump-to-error'."
   "Compiles the current buffer and displays the JavaScript in a buffer
 called `coffee-compiled-buffer-name'."
   (interactive)
-  (save-excursion
-    (coffee-compile-region (point-min) (point-max))))
+  (coffee-compile-region (point-min) (point-max)))
 
 (defun coffee-compile-region (start end)
   "Compiles a region and displays the JavaScript in a buffer called
@@ -338,6 +339,7 @@ called `coffee-compiled-buffer-name'."
   (let ((buffer (get-buffer coffee-compiled-buffer-name)))
     (when buffer
       (with-current-buffer buffer
+        (setq buffer-read-only nil)
         (erase-buffer))))
 
   (apply (apply-partially 'call-process-region start end coffee-command nil
@@ -346,10 +348,13 @@ called `coffee-compiled-buffer-name'."
          (append coffee-args-compile (list "-s" "-p")))
 
   (let ((buffer (get-buffer coffee-compiled-buffer-name)))
-    (display-buffer buffer)
-    (with-current-buffer buffer
-      (let ((buffer-file-name "tmp.js"))
-        (set-auto-mode)))))
+    (save-selected-window
+      (pop-to-buffer buffer)
+      (with-current-buffer buffer
+        (let ((buffer-file-name "tmp.js"))
+          (setq buffer-read-only t)
+          (set-auto-mode)
+          (goto-char (point-min)))))))
 
 (defun coffee-get-repl-proc ()
   (unless (comint-check-proc coffee-repl-buffer)
@@ -429,7 +434,7 @@ called `coffee-compiled-buffer-name'."
 (defvar coffee-local-assign-regexp "\\s-*\\([[:word:].$]+\\)\\s-*=\\(?:[^>]\\|$\\)")
 
 ;; Lambda
-(defvar coffee-lambda-regexp "\\(?:(.+)\\)?\\s-*\\(->\\|=>\\)")
+(defvar coffee-lambda-regexp "\\(?:(.*)\\)?\\s-*\\(->\\|=>\\)")
 
 ;; Namespaces
 (defvar coffee-namespace-regexp "\\b\\(?:class\\s-+\\(\\S-+\\)\\)\\b")
@@ -541,7 +546,7 @@ output in a compilation buffer."
   (concat "^\\(\\s-*\\)" ; $1
           "\\(?:"
           coffee-assign-regexp ; $2
-          "\\s-+"
+          "\\s-*"
           coffee-lambda-regexp
           "\\|"
           coffee-namespace-regexp ; $4
@@ -593,6 +598,9 @@ output in a compilation buffer."
 ;; Indentation
 ;;
 
+(defsubst coffee-insert-spaces (count)
+  (insert-char ?  count))
+
 ;;; The theory is explained in the README.
 
 (defun coffee-indent-line ()
@@ -600,13 +608,13 @@ output in a compilation buffer."
   (interactive)
 
   (if (= (point) (line-beginning-position))
-      (insert-char ?  coffee-tab-width)
+      (coffee-insert-spaces coffee-tab-width)
     (save-excursion
       (let ((prev-indent (coffee-previous-indent))
             (cur-indent (current-indentation)))
         ;; Shift one column to the left
         (beginning-of-line)
-        (insert-char ?  coffee-tab-width)
+        (coffee-insert-spaces coffee-tab-width)
 
         (when (= (point-at-bol) (point))
           (forward-char coffee-tab-width))
@@ -637,11 +645,11 @@ output in a compilation buffer."
         (indent-next nil))
     (delete-horizontal-space t)
     (newline)
-    (insert-char ?  prev-indent)
+    (coffee-insert-spaces prev-indent)
 
     ;; We need to insert an additional tab because the last line was special.
     (when (coffee-line-wants-indent)
-      (insert-char ?  coffee-tab-width))
+      (coffee-insert-spaces coffee-tab-width))
 
     ;; Last line was a comment so this one should probably be,
     ;; too. Makes it easy to write multi-line comments (like the one I'm
@@ -672,7 +680,8 @@ Delete ARG spaces if ARG!=1."
 ;; line starts with `class', for instance, you're probably going to
 ;; want to indent the next line.
 
-(defvar coffee-indenters-bol '("class" "for" "if" "try" "while")
+(defvar coffee-indenters-bol '("class" "for" "if" "else" "while" "until"
+                               "try" "catch" "finally" "switch")
   "Keywords or syntax whose presence at the start of a line means the
 next line should probably be indented.")
 
@@ -795,7 +804,7 @@ comments such as the following:
 (defconst coffee-defun-regexp
   (concat "^\\s-*\\(?:"
           coffee-assign-regexp
-          "\\s-+"
+          "\\s-*"
           coffee-lambda-regexp
           "\\|"
           coffee-namespace-regexp
@@ -851,27 +860,35 @@ comments such as the following:
   (or (coffee-in-comment-p) (coffee-current-line-empty-p)))
 
 (defun coffee-skip-forward-lines (arg)
-  (while (and (not (eobp)) (coffee-skip-line-p))
-    (forward-line arg)))
+  (let ((pred (if (> arg 0)
+                  (lambda () (not (eobp)))
+                (lambda () (not (bobp))))))
+   (while (and (funcall pred) (coffee-skip-line-p))
+     (forward-line arg))))
 
 (defun coffee-beginning-of-defun (&optional count)
   (interactive "p")
   (unless count
     (setq count 1))
-  (coffee-skip-forward-lines -1)
-  (let ((start-indent (current-indentation)))
-    (when (and (not (eq this-command 'coffee-mark-defun)) (looking-back "^\\s-*"))
-      (forward-line -1))
-    (let ((finish nil))
-      (goto-char (line-end-position))
-      (while (and (not finish) (re-search-backward coffee-defun-regexp nil 'move))
-        (let ((cur-indent (current-indentation)))
-          (when (<= cur-indent start-indent)
-            (setq start-indent cur-indent)
-            (decf count)))
-        (when (<= count 0)
-          (back-to-indentation)
-          (setq finish t))))))
+  (let ((next-indent nil))
+    (when (coffee-skip-line-p)
+      (save-excursion
+        (coffee-skip-forward-lines +1)
+        (setq next-indent (current-indentation))))
+    (coffee-skip-forward-lines -1)
+    (let ((start-indent (or next-indent (current-indentation))))
+      (when (and (not (eq this-command 'coffee-mark-defun)) (looking-back "^\\s-*"))
+        (forward-line -1))
+      (let ((finish nil))
+        (goto-char (line-end-position))
+        (while (and (not finish) (re-search-backward coffee-defun-regexp nil 'move))
+          (let ((cur-indent (current-indentation)))
+            (when (<= cur-indent start-indent)
+              (setq start-indent cur-indent)
+              (decf count)))
+          (when (<= count 0)
+            (back-to-indentation)
+            (setq finish t)))))))
 
 (defun coffee-end-of-block (&optional count)
   "Move point to the end of the block."
@@ -902,11 +919,19 @@ comments such as the following:
   (interactive)
   (let ((be-actived transient-mark-mode))
     (push-mark (point))
-    (coffee-beginning-of-defun)
-    (push-mark (point))
-    (coffee-end-of-block)
-    (push-mark (point) nil be-actived)
-    (coffee-beginning-of-defun)))
+    (let ((cur-indent (current-indentation)))
+      (coffee-beginning-of-defun)
+      (push-mark (point))
+      (coffee-end-of-block)
+      (push-mark (point) nil be-actived)
+      (let ((next-indent nil))
+        (when (coffee-skip-line-p)
+          (save-excursion
+            (coffee-skip-forward-lines +1)
+            (setq next-indent (current-indentation))))
+        (when (and next-indent (< next-indent cur-indent))
+          (coffee-skip-forward-lines -1))
+        (coffee-beginning-of-defun)))))
 
 ;;
 ;; hs-minor-mode
@@ -983,8 +1008,13 @@ comments such as the following:
              (put-text-property (match-beginning 1) (match-end 1)
                                 'syntax-table (string-to-syntax "_")))))))
     (coffee-regexp-regexp (1 (string-to-syntax "_")))
-    ("^[[:space:]]*\\(###\\)\\(?:[[:space:]]+.*\\)?$"
-     (1 (string-to-syntax "!"))))
+    ("^[[:space:]]*\\(###\\)\\([[:space:]]+.*\\)?$"
+     (1 (ignore
+         (let ((after-triple-hash (match-string-no-properties 2)))
+           (when (or (not after-triple-hash)
+                     (not (string-match-p "###\\'" after-triple-hash)))
+             (put-text-property (match-beginning 1) (match-end 1)
+                                'syntax-table (string-to-syntax "!"))))))))
    (point) end))
 
 ;;
@@ -1024,6 +1054,11 @@ comments such as the following:
   ;; fill
   (set (make-local-variable 'fill-forward-paragraph-function)
        'coffee-fill-forward-paragraph-function)
+
+  (set (make-local-variable 'beginning-of-defun-function)
+       'coffee-beginning-of-defun)
+  (set (make-local-variable 'end-of-defun-function)
+       'coffee-end-of-block)
 
   ;; imenu
   (set (make-local-variable 'imenu-create-index-function)

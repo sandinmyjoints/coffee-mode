@@ -219,7 +219,7 @@ foo =
   "Highlight lambda expression with fat arrow"
 
   (with-coffee-temp-buffer
-    "foo =>
+    "(foo) =>
       \"bar\""
 
     (forward-cursor-on "=>")
@@ -229,8 +229,18 @@ foo =
   "Highlight lambda expression with thin arrow"
 
   (with-coffee-temp-buffer
-    "foo ->
+    "(foo) ->
       \"bar\""
+
+    (forward-cursor-on "->")
+    (should (face-at-cursor-p 'font-lock-function-name-face))))
+
+(ert-deftest lambda-expression-multiple-arguments ()
+  "Highlight lambda expression with multiple arguments"
+
+  (with-coffee-temp-buffer
+    "(foo, bar) ->
+      foo + bar"
 
     (forward-cursor-on "->")
     (should (face-at-cursor-p 'font-lock-function-name-face))))
@@ -421,6 +431,47 @@ block_comment
 ###
 after_comment
 "
+    (forward-cursor-on "after_comment")
+    (should-not (face-at-cursor-p 'font-lock-comment-face))))
+
+;; #190
+(ert-deftest block-comment-in-one-line ()
+  "Block comment in one line"
+  (with-coffee-temp-buffer
+    "
+### Comment ###
+notAComment()
+### Comment ###
+"
+    (forward-cursor-on "Comment")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "notAComment")
+    (should-not (face-at-cursor-p 'font-lock-comment-face))
+    (goto-char (line-end-position))
+
+    (forward-cursor-on "Comment")
+    (should (face-at-cursor-p 'font-lock-comment-face))))
+
+(ert-deftest block-comment-comment-after-triple-hash ()
+  "Block comment with comment in same line as triple hash"
+  (with-coffee-temp-buffer
+    "
+### Comment
+notAComment()
+###
+after_comment
+"
+    (forward-cursor-on "Comment")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "notAComment")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+    (goto-char (line-end-position))
+
+    (forward-cursor-on "###")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
     (forward-cursor-on "after_comment")
     (should-not (face-at-cursor-p 'font-lock-comment-face))))
 
