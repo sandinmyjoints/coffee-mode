@@ -211,6 +211,15 @@ foo =
 
     (should-not (face-at-cursor-p 'font-lock-variable-name-face))))
 
+(ert-deftest local-assignment-not-highlight-eqeq ()
+  "Don't highlight left operand of '=='"
+
+  (with-coffee-temp-buffer
+    "foo == 10"
+
+    (forward-cursor-on "foo")
+    (should-not (face-at-cursor-p 'font-lock-variable-name-face))))
+
 ;;
 ;; Lambda expression
 ;;
@@ -346,6 +355,18 @@ foo =
       iced-keyword
       (should (face-at-cursor-p 'font-lock-keyword-face)))))
 
+(ert-deftest keywords-js-keywords-property-name ()
+  "Don't highlight property name whose name is JavaScript keywords"
+
+  (dolist (js-keyword '("if" "else" "new" "return" "try" "catch"
+                        "finally" "throw" "break" "continue" "for" "in" "while"
+                        "delete" "instanceof" "typeof" "switch" "super" "extends"
+                        "class" "until" "loop"))
+    (with-coffee-temp-buffer
+      (format "foo.%s" js-keyword)
+      (forward-cursor-on js-keyword)
+      (should-not (face-at-cursor-p 'font-lock-keyword-face)))))
+
 ;;
 ;; class keywords(#99)
 ;;
@@ -375,6 +396,15 @@ foo =
     (with-coffee-temp-buffer
       keyword
       (should (face-at-cursor-p 'font-lock-constant-face)))))
+
+(ert-deftest boolean-property ()
+  "Don't highlight property name whose name is boolean keyword"
+
+  (dolist (keyword '("true" "false" "yes" "no" "on" "off" "null" "undefined"))
+    (with-coffee-temp-buffer
+      (format "foo.%s" keyword)
+      (forward-cursor-on keyword)
+      (should-not (face-at-cursor-p 'font-lock-constant-face)))))
 
 ;;
 ;; Single line comment
@@ -473,6 +503,55 @@ after_comment
     (should (face-at-cursor-p 'font-lock-comment-face))
 
     (forward-cursor-on "after_comment")
+    (should-not (face-at-cursor-p 'font-lock-comment-face))))
+
+;; #205
+(ert-deftest block-comment-end-comment-is-not-beginning-of-line ()
+  "Highlight block comment if comment end is not beginning of line "
+  (with-coffee-temp-buffer
+    "
+myFunction: (callback) =>
+        ### My block comment that
+        maybe goes a few lines ###
+        doStuff
+"
+    (forward-cursor-on "My")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "lines")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "doStuff")
+    (should-not (face-at-cursor-p 'font-lock-comment-face))))
+
+;; #205 -- more hashes
+(ert-deftest block-comment-with-more-hash-marks ()
+  "Highlight block comment whose block ends is more than 3 hash marks"
+  (with-coffee-temp-buffer
+    "
+myFunction: (callback) =>
+    ### This comment ends with to many hashes ####
+    doStuff
+"
+    (forward-cursor-on "doStuff")
+    (should-not (face-at-cursor-p 'font-lock-comment-face))))
+
+(ert-deftest block-comment-with-more-hash-marks2 ()
+  "Highlight block comment whose block ends is more than 3 hash marks another case"
+  (with-coffee-temp-buffer
+    "
+myFunction: (callback) =>
+    ### same
+    here #####
+    doStuff
+"
+    (forward-cursor-on "same")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "here")
+    (should (face-at-cursor-p 'font-lock-comment-face))
+
+    (forward-cursor-on "doStuff")
     (should-not (face-at-cursor-p 'font-lock-comment-face))))
 
 ;;

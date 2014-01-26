@@ -431,7 +431,7 @@ called `coffee-compiled-buffer-name'."
 (defvar coffee-assign-regexp "\\(@?[[:word:].$]+?\\)\\s-*:")
 
 ;; Local Assignment
-(defvar coffee-local-assign-regexp "\\s-*\\([[:word:].$]+\\)\\s-*=\\(?:[^>]\\|$\\)")
+(defvar coffee-local-assign-regexp "\\s-*\\([[:word:].$]+\\)\\s-*=\\(?:[^>=]\\|$\\)")
 
 ;; Lambda
 (defvar coffee-lambda-regexp "\\(?:(.*)\\)?\\s-*\\(->\\|=>\\)")
@@ -441,8 +441,9 @@ called `coffee-compiled-buffer-name'."
 
 ;; Booleans
 (defvar coffee-boolean-regexp
-  (regexp-opt '("true" "false" "yes" "no" "on" "off" "null" "undefined")
-              'words))
+  (concat "\\(?:^\\|[^.]\\)"
+          (regexp-opt '("true" "false" "yes" "no" "on" "off" "null" "undefined")
+                      'words)))
 
 ;; Regular expressions
 (eval-and-compile
@@ -476,10 +477,11 @@ called `coffee-compiled-buffer-name'."
 ;; Regular expression combining the above three lists.
 (defvar coffee-keywords-regexp
   ;; keywords can be member names.
-  (regexp-opt (append coffee-js-reserved
-                      coffee-js-keywords
-                      coffee-cs-keywords
-                      iced-coffee-cs-keywords) 'symbols))
+  (concat "\\(?:^\\|[^.]\\)"
+          (regexp-opt (append coffee-js-reserved
+                              coffee-js-keywords
+                              coffee-cs-keywords
+                              iced-coffee-cs-keywords) 'symbols)))
 
 ;; Create the list for font-lock. Each class of keyword is given a
 ;; particular face.
@@ -993,6 +995,23 @@ comments such as the following:
            (put-text-property (1- quote-ending-pos) quote-ending-pos
                               'syntax-table (string-to-syntax "|"))))))
 
+(defun coffee-syntax-peropertize-block-comment ()
+  (let ((curpoint (point))
+        (inhibit-changing-match-data t))
+    (let* ((valid-comment-start nil)
+           (valid-comment-end (looking-at-p "#\\{0,2\\}\\s-*$"))
+           (ppss (prog2
+                     (backward-char 3)
+                     (syntax-ppss)
+                   (setq valid-comment-start (looking-back "^\\s-*"))
+                   (forward-char 3)))
+           (in-comment (nth 4 ppss))
+           (in-string (nth 3 ppss)))
+      (when (or (and (not in-comment) (not in-string) valid-comment-start)
+                (and in-comment valid-comment-end))
+        (put-text-property (- curpoint 3) curpoint
+                           'syntax-table (string-to-syntax "!"))))))
+
 (defun coffee-syntax-propertize-function (start end)
   (goto-char start)
   (funcall
@@ -1008,13 +1027,8 @@ comments such as the following:
              (put-text-property (match-beginning 1) (match-end 1)
                                 'syntax-table (string-to-syntax "_")))))))
     (coffee-regexp-regexp (1 (string-to-syntax "_")))
-    ("^[[:space:]]*\\(###\\)\\([[:space:]]+.*\\)?$"
-     (1 (ignore
-         (let ((after-triple-hash (match-string-no-properties 2)))
-           (when (or (not after-triple-hash)
-                     (not (string-match-p "###\\'" after-triple-hash)))
-             (put-text-property (match-beginning 1) (match-end 1)
-                                'syntax-table (string-to-syntax "!"))))))))
+    ("###"
+     (0 (ignore (coffee-syntax-peropertize-block-comment)))))
    (point) end))
 
 ;;
